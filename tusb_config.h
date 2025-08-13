@@ -1,0 +1,17 @@
+#ifndef TUSB_CONFIG_H
+#define TUSB_CONFIG_H
+
+#define CFG_TUH_ENABLED 1
+
+#define CFG_TUSB_RHPORT0_MODE (OPT_MODE_HOST | OPT_MODE_LOW_SPEED)
+
+#define BOARD_TUH_RHPORT 0
+
+#define CFG_TUH_HID 1
+#define CFG_TUH_HID_KEYBOARD 1
+
+#define CFG_TUSB_HOST_DEVICE_MAX 1
+#define CFG_TUSB_MEM_SECTION
+#define CFG_TUSB_MEM_ALIGN __attribute__((aligned(4)))
+
+#endif
