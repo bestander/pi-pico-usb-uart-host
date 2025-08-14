@@ -1,21 +1,19 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "tusb.h"
-
 #include "hardware/gpio.h"
-#include "i2c_slave.h"
+#include "hardware/uart.h"
 #include <string.h>
 
-#define I2C_SLAVE_ADDR 0x20
-#define I2C_SDA_PIN 6
-#define I2C_SCL_PIN 7
+#define UART_ID uart1
+#define BAUD_RATE 9600
+#define UART_TX_PIN 8  // TX
+#define UART_RX_PIN 9  // RX
 #define LED_PIN 25
 
-
-uint8_t i2c_rx_buf[32];
-uint8_t i2c_tx_buf[32];
-volatile uint32_t ping_count = 0;
-volatile size_t i2c_rx_len = 0;
+// Buffer for UART received data (optional, for future bidirectional use)
+uint8_t uart_rx_buf[32];
+volatile size_t uart_rx_len = 0;
 
 void blink_led() {
     gpio_put(LED_PIN, 1);
@@ -23,35 +21,18 @@ void blink_led() {
     gpio_put(LED_PIN, 0);
 }
 
-// I2C slave event handler
-void i2c_slave_event_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
-    switch (event) {
-        case I2C_SLAVE_RECEIVE: {
-            // Read all available bytes from master
-            size_t rx_avail = i2c_get_read_available(i2c);
-            if (rx_avail > 0) {
-                    i2c_read_raw_blocking(i2c, i2c_rx_buf, rx_avail);
-                i2c_rx_buf[i2c_rx_len] = 0;
-                blink_led();
-            }
-            break;
-        }
-        case I2C_SLAVE_REQUEST: {
-            // Master is requesting data, send last pressed key
-            size_t tx_len = strlen((char *)i2c_tx_buf);
-            if (tx_len > 0) {
-                i2c_write_raw_blocking(i2c, i2c_tx_buf, tx_len);
-                blink_led();
-            }
-            break;
-        }
-        case I2C_SLAVE_FINISH:
-            // Optionally handle stop/restart
-            break;
+// Handle UART received data (optional, kept for debugging)
+void uart_receive() {
+    while (uart_is_readable(UART_ID) && uart_rx_len < sizeof(uart_rx_buf) - 1) {
+        uart_rx_buf[uart_rx_len++] = uart_getc(UART_ID);
+        printf("Received on Pico UART: %c (0x%02X)\n", uart_rx_buf[uart_rx_len - 1], uart_rx_buf[uart_rx_len - 1]);
+    }
+    uart_rx_buf[uart_rx_len] = 0;
+    if (uart_rx_len > 0) {
+        printf("Full message received: %s\n", uart_rx_buf);
+        uart_rx_len = 0;
     }
 }
-
-// No longer needed: I2C events are handled by i2c_slave_event_handler
 
 void usb_host_init(void) {
     tusb_init();
@@ -64,7 +45,7 @@ void usb_host_task(void) {
 
 void tuh_mount_cb(uint8_t dev_addr) {
     printf("USB Device Connected: Address = %u\n", dev_addr);
-    tuh_hid_receive_report(dev_addr, 0); // Request HID reports
+    tuh_hid_receive_report(dev_addr, 0);
 }
 
 void tuh_umount_cb(uint8_t dev_addr) {
@@ -74,7 +55,6 @@ void tuh_umount_cb(uint8_t dev_addr) {
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     (void)instance;
 
-    // Modifier keys (byte 0)
     uint8_t modifiers = report[0];
     char key_text[16] = "";
     bool key_found = false;
@@ -130,7 +110,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
             case 0x31: snprintf(key_text, sizeof(key_text), "%c", shift ? '|' : '\\'); key_found = true; break;
             case 0x32: snprintf(key_text, sizeof(key_text), "%c", shift ? '~' : '#'); key_found = true; break;
             case 0x33: snprintf(key_text, sizeof(key_text), "%c", shift ? ':' : ';'); key_found = true; break;
-            case 0x34: snprintf(key_text, sizeof(key_text), "%c", shift ? '"' : '\'' ); key_found = true; break;
+            case 0x34: snprintf(key_text, sizeof(key_text), "%c", shift ? '"' : '\''); key_found = true; break;
             case 0x35: snprintf(key_text, sizeof(key_text), "%c", shift ? '~' : '`'); key_found = true; break;
             case 0x36: snprintf(key_text, sizeof(key_text), "%c", shift ? '<' : ','); key_found = true; break;
             case 0x37: snprintf(key_text, sizeof(key_text), "%c", shift ? '>' : '.'); key_found = true; break;
@@ -155,13 +135,15 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
             default: snprintf(key_text, sizeof(key_text), "Unknown (0x%02x)", report[i]); key_found = true; break;
         }
         if (key_found) {
-            strncpy((char *)i2c_tx_buf, key_text, sizeof(i2c_tx_buf));
-            i2c_tx_buf[sizeof(i2c_tx_buf)-1] = 0;
+            printf("Sending to UART: %s\\n\n", key_text);
+            uart_puts(UART_ID, key_text);
+            uart_puts(UART_ID, "\n");
+            blink_led();
             break;
         }
     }
     printf("%s\n", key_text);
-    tuh_hid_receive_report(dev_addr, instance); // Request next report
+    tuh_hid_receive_report(dev_addr, instance);
 }
 
 int main() {
@@ -170,23 +152,26 @@ int main() {
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 0);
 
+    // Initialize UART
+    uart_init(UART_ID, BAUD_RATE);
+    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    uart_set_hw_flow(UART_ID, false, false);
+    uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
+    if (uart_is_enabled(UART_ID)) {
+        printf("UART Initialized on GPIO %d (TX), %d (RX) at %d baud\n", UART_TX_PIN, UART_RX_PIN, BAUD_RATE);
+    } else {
+        printf("UART1 failed to initialize\n");
+    }
+
     // Initialize USB Host
     printf("Initializing USB Host...\n");
     usb_host_init();
 
-    // Initialize I2C0 as slave
-    i2c_init(i2c1, 100 * 1000); // 100kHz
-    printf("Pico I2C Test initialized!!\n");
-    gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
-    gpio_pull_up(I2C_SDA_PIN);
-    gpio_pull_up(I2C_SCL_PIN);
-    printf("Starting Pico I2C Test...\n");
-    i2c_slave_init(i2c1, I2C_SLAVE_ADDR, i2c_slave_event_handler);
-    printf("Waiting for I2C commands from ESP32...\n");
-
+    printf("Waiting for USB keyboard input...\n");
     while (1) {
         usb_host_task();
+        uart_receive();
         sleep_ms(10);
     }
     return 0;
