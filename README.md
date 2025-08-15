@@ -21,20 +21,60 @@ This project implements a USB-to-UART keyboard controller for the Raspberry Pi P
 - **Power**: Power the Pico via USB (OTG cable)
 
 ## UART Settings
-- **Baud Rate**: 9600
-- **Data Format**: 8 data bits, 1 stop bit, no parity
+
+## Compile and Flash Instructions
+
+### Prerequisites
+- Install the Raspberry Pi Pico SDK and dependencies (see official documentation).
+- Ensure CMake and Ninja are installed.
+
+### Build
+1. Open a terminal in the project directory.
+2. Run:
+	```bash
+	mkdir -p build
+	cd build
+	cmake ..
+	ninja
+	```
+	This will generate the firmware files (e.g., `.uf2`, `.elf`).
+
+### Flash (First Time)
+1. Hold down the BOOTSEL button on the Pico, plug it into your computer via USB.
+2. Drag and drop the generated `.uf2` file (e.g., `host_hid.uf2`) onto the Pico's USB mass storage device.
+
+### Flash (Subsequent Uploads)
+If the firmware is running and using USB host mode, you must use a **Pico Probe** (SWD interface) for flashing and debugging:
+1. Connect Pico Probe to the SWD pins of your Pico.
+2. Use OpenOCD or your IDE to flash the `.elf` file.
 
 ## Firmware Upload & Debugging
-- **Important:** Since the Pico's USB port is used in host mode for keyboard connection, you cannot use it for firmware upload or debugging while the firmware is running.
-- For subsequent uploads and debugging, use a **Pico Probe** (SWD interface).
-- The **first upload** can be done via USB (bootloader mode), but after flashing this firmware, use Pico Probe for further development.
 
-## Usage
-1. Flash the firmware to your Raspberry Pi Pico.
-2. Connect your USB keyboard to the Pico using an OTG cable.
-3. Connect GPIO 8 (TX) and GPIO 9 (RX) to your target device's UART pins.
-4. Power the Pico via USB.
-5. Key events from the keyboard will be sent as raw HID reports over UART.
+
+## UART Command: Set GPIO Pin
+
+You can send a 4-byte command over UART to set a GPIO pin's output value:
+
+**Format:**
+```
+<cmd_type><pin><value>\n
+```
+- `cmd_type`: Command type (0x01 for set pin)
+- `pin`: GPIO pin number (e.g., 2 for GPIO2)
+- `value`: 0x00 for LOW, 0x01 for HIGH
+- `\n`: Newline character (0x0A)
+
+**Example:**
+To set GPIO 2 HIGH:
+```
+0x01 0x02 0x01 0x0A
+```
+To set GPIO 2 LOW:
+```
+0x01 0x02 0x00 0x0A
+```
+
+Multiple commands can be sent back-to-back; the firmware will process each one in order.
 
 ## Code Overview
 - `main.c`: Handles USB host initialization, HID keyboard input, and UART transmission.

@@ -26,21 +26,33 @@ void uart_receive() {
     while (uart_is_readable(UART_ID) && uart_rx_len < sizeof(uart_rx_buf) - 1) {
         uart_rx_buf[uart_rx_len++] = uart_getc(UART_ID);
     }
-    // Check for end of message (newline) and minimum length
-    if (uart_rx_len >= 4 && uart_rx_buf[uart_rx_len - 1] == '\n') {
-        uint8_t cmd_type = uart_rx_buf[0];
-        uint8_t pin = uart_rx_buf[1];
-        uint8_t value = uart_rx_buf[2];
-        // Only one command type for now: 0x01 = set pin
-        if (cmd_type == 0x01) {
-            gpio_init(pin);
-            gpio_set_dir(pin, GPIO_OUT);
-            gpio_put(pin, value ? 1 : 0);
-            printf("Set GPIO %d to %d\n", pin, value ? 1 : 0);
+
+    // Process all complete messages in the buffer
+    size_t processed = 0;
+    while (uart_rx_len - processed >= 4) {
+        // Look for newline in the next message
+        if (uart_rx_buf[processed + 3] == '\n') {
+            uint8_t cmd_type = uart_rx_buf[processed + 0];
+            uint8_t pin = uart_rx_buf[processed + 1];
+            uint8_t value = uart_rx_buf[processed + 2];
+            if (cmd_type == 0x01) {
+                gpio_init(pin);
+                gpio_set_dir(pin, GPIO_OUT);
+                gpio_put(pin, value ? 1 : 0);
+                printf("Set GPIO %d to %d\n", pin, value ? 1 : 0);
+            } else {
+                printf("Unknown command type: 0x%02X\n", cmd_type);
+            }
+            processed += 4;
         } else {
-            printf("Unknown command type: 0x%02X\n", cmd_type);
+            // No complete message found, break
+            break;
         }
-        uart_rx_len = 0;
+    }
+    // Shift remaining bytes to start of buffer
+    if (processed > 0) {
+        memmove(uart_rx_buf, uart_rx_buf + processed, uart_rx_len - processed);
+        uart_rx_len -= processed;
     }
 }
 
