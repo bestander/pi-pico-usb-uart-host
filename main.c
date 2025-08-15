@@ -25,11 +25,21 @@ void blink_led() {
 void uart_receive() {
     while (uart_is_readable(UART_ID) && uart_rx_len < sizeof(uart_rx_buf) - 1) {
         uart_rx_buf[uart_rx_len++] = uart_getc(UART_ID);
-        printf("Received on Pico UART: %c (0x%02X)\n", uart_rx_buf[uart_rx_len - 1], uart_rx_buf[uart_rx_len - 1]);
     }
-    uart_rx_buf[uart_rx_len] = 0;
-    if (uart_rx_len > 0) {
-        printf("Full message received: %s\n", uart_rx_buf);
+    // Check for end of message (newline) and minimum length
+    if (uart_rx_len >= 4 && uart_rx_buf[uart_rx_len - 1] == '\n') {
+        uint8_t cmd_type = uart_rx_buf[0];
+        uint8_t pin = uart_rx_buf[1];
+        uint8_t value = uart_rx_buf[2];
+        // Only one command type for now: 0x01 = set pin
+        if (cmd_type == 0x01) {
+            gpio_init(pin);
+            gpio_set_dir(pin, GPIO_OUT);
+            gpio_put(pin, value ? 1 : 0);
+            printf("Set GPIO %d to %d\n", pin, value ? 1 : 0);
+        } else {
+            printf("Unknown command type: 0x%02X\n", cmd_type);
+        }
         uart_rx_len = 0;
     }
 }
@@ -55,7 +65,7 @@ void tuh_umount_cb(uint8_t dev_addr) {
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     (void)instance;
 
-    // Send raw report array to UART instead of resolving key_text here
+    // Send raw HID report array to UART
     uart_write_blocking(UART_ID, report, len);
     blink_led();
     tuh_hid_receive_report(dev_addr, instance);
